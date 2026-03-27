@@ -14167,6 +14167,11 @@ function createExamSchedule() {
     
     loadExamList();
     updateExamStats();
+    
+    // Automatically open timetable entry form
+    setTimeout(() => {
+        openExamTimetable(exam.id);
+    }, 500);
 }
 
 // Load exam list
@@ -19958,8 +19963,9 @@ async function loadExamList() {
                 <td>${formatDate(exam.startDate)} to ${formatDate(exam.endDate)}<br><small>${examTimetables.length} exams</small></td>
                 <td><span style="background: ${statusColor}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px;">${exam.status}</span></td>
                 <td>
+                    <button class="btn btn-sm btn-primary" onclick="openExamTimetable(${exam.id})" title="Add/Edit Timetable">📝 Timetable</button>
                     <button class="btn btn-sm btn-info" onclick="viewExamTimetable(${exam.id})" title="View Timetable">📋 View</button>
-                    <button class="btn btn-sm btn-primary" onclick="printExamTimetable(${exam.id})" title="Print">🖨️</button>
+                    <button class="btn btn-sm btn-success" onclick="printExamTimetable(${exam.id})" title="Print">🖨️</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteExam(${exam.id})" title="Delete">🗑️</button>
                 </td>
             </tr>
