@@ -3627,6 +3627,8 @@ body.dark-mode .form-group textarea:focus {
                         <div class="form-group">
                             <label>Session *</label>
                             <select id="examSession" onchange="onSessionChange(this.value)">
+                                <option value="1st Half">1st Half</option>
+                                <option value="2nd Half">2nd Half</option>
                                 <option value="Morning">Morning</option>
                                 <option value="Afternoon">Afternoon</option>
                                 <option value="Evening">Evening</option>
@@ -19383,8 +19385,8 @@ async function autoGenerateExamTimetable() {
     let currentDate = new Date(startDate);
     const endDateObj = new Date(endDate);
     
-    const sessions = ['Morning', 'Afternoon'];
-    const startTimes = ['10:00', '14:00'];
+    const sessions   = ['1st Half', '2nd Half'];
+    const startTimes = ['10:00', '13:00'];
     let sessionIndex = 0;
     let entryCount = 0;
     
@@ -20117,7 +20119,7 @@ async function generateInvigilatorRoster() {
                     room: room,
                     teacherId: teacher.id,
                     teacherName: teacher.name,
-                    session: i === 0 ? 'Morning' : 'Afternoon'
+                    session: i === 0 ? '1st Half' : '2nd Half'
                 });
                 
                 teacherIndex++;
@@ -20565,33 +20567,36 @@ async function showSeatingArrangementDialog() {
         <div id="seatAutoSection">
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
             <div>
-              <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Students per Room</label>
-              <input type="number" id="seatRoomCap" value="30" min="5" max="100"
-                style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
-            </div>
-            <div>
               <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Room Name Prefix</label>
               <input type="text" id="seatPrefix" value="Room"
                 style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
             </div>
+            <div>
+              <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Arrangement Method</label>
+              <select id="seatMethod" style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
+                <option value="mix">Class Mix (recommended)</option>
+                <option value="class">Class-wise</option>
+                <option value="roll">Roll order</option>
+              </select>
+            </div>
           </div>
-          <div style="margin-bottom:14px;">
-            <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Arrangement Method</label>
-            <select id="seatMethod" style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
-              <option value="mix">Class Mix — different classes in one room (recommended)</option>
-              <option value="class">Class-wise — same class together</option>
-              <option value="roll">Roll order — across all students</option>
-            </select>
+
+          <!-- Room capacity list -->
+          <div style="margin-bottom:10px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <label style="font-weight:700;font-size:13px;color:#1e3c72;">Room Capacities</label>
+              <button onclick="autoAddRoom()" style="padding:4px 12px;background:#e3f2fd;border:1px solid #90caf9;border-radius:6px;color:#1565c0;font-size:12px;font-weight:600;cursor:pointer;">➕ Add Room</button>
+            </div>
+            <div id="autoRoomList">
+              <!-- auto-populated by JS -->
+            </div>
+            <small style="color:#888;">Add rooms with different capacities. Students fill top-to-bottom.</small>
           </div>
+
           <div style="background:#e8f5e9;padding:10px 14px;border-radius:8px;font-size:13px;color:#2e7d32;margin-bottom:14px;">
             📊 Total students: <strong>${totalStudents}</strong> &nbsp;|&nbsp;
-            Rooms needed: <strong id="seatRoomsNeeded">${Math.ceil(totalStudents/30)}</strong>
-            <script>
-              document.getElementById('seatRoomCap')?.addEventListener('input', function() {
-                const n = document.getElementById('seatRoomsNeeded');
-                if(n) n.textContent = Math.ceil(${totalStudents}/Math.max(1,parseInt(this.value)||30));
-              });
-            <\/script>
+            Total capacity: <strong id="seatTotalCap">0</strong> &nbsp;|&nbsp;
+            Rooms: <strong id="seatRoomCount">0</strong>
           </div>
         </div>
 
@@ -20615,8 +20620,9 @@ async function showSeatingArrangementDialog() {
       </div>`;
     document.body.appendChild(modal);
 
-    // Init manual section with 2 rooms
+    // Init manual section with 2 rooms and auto section with 2 rooms
     seatAddRoom(); seatAddRoom();
+    autoAddRoom('Room 1', 30); autoAddRoom('Room 2', 30);
 }
 
 function seatModeToggle(mode) {
@@ -20625,6 +20631,43 @@ function seatModeToggle(mode) {
 }
 
 let _seatRoomCount = 0;
+
+// ── Auto mode room management ──
+let _autoRoomCount = 0;
+function autoAddRoom(name='', cap=30) {
+    _autoRoomCount++;
+    const n = _autoRoomCount;
+    const prefix = document.getElementById('seatPrefix')?.value || 'Room';
+    const div = document.createElement('div');
+    div.id = `autoRoom_${n}`;
+    div.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:8px;';
+    div.innerHTML = `
+      <input type="text" value="${name || prefix+' '+n}" id="autoRN_${n}"
+        style="flex:2;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;" placeholder="Room name">
+      <input type="number" value="${cap}" min="1" max="200" id="autoRC_${n}"
+        style="flex:1;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;text-align:center;" placeholder="Capacity"
+        oninput="updateAutoCapSummary()">
+      <button onclick="document.getElementById('autoRoom_${n}').remove();updateAutoCapSummary()"
+        style="padding:6px 10px;background:#ffebee;border:none;color:#f44336;border-radius:6px;cursor:pointer;font-size:16px;">✕</button>`;
+    document.getElementById('autoRoomList').appendChild(div);
+    updateAutoCapSummary();
+}
+
+function updateAutoCapSummary() {
+    let totalCap = 0, roomCount = 0;
+    let i = 1;
+    while(document.getElementById(`autoRoom_${i}`)) {
+        const cap = parseInt(document.getElementById(`autoRC_${i}`)?.value) || 0;
+        totalCap += cap; roomCount++;
+        i++;
+    }
+    const tc = document.getElementById('seatTotalCap');
+    const rc = document.getElementById('seatRoomCount');
+    if(tc) tc.textContent = totalCap;
+    if(rc) rc.textContent = roomCount;
+}
+
+// ── Manual mode room management ──
 function seatAddRoom() {
     _seatRoomCount++;
     const n   = _seatRoomCount;
@@ -20636,7 +20679,7 @@ function seatAddRoom() {
         <strong style="color:#1e3c72;">Room ${n}</strong>
         <button onclick="document.getElementById('seatRoom_${n}').remove()" style="background:#ffebee;border:none;color:#f44336;border-radius:6px;padding:3px 10px;cursor:pointer;">✕ Remove</button>
       </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:10px;">
         <div>
           <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">Room Name *</label>
           <input type="text" placeholder="e.g., Room ${n} / Hall A" value="Room ${n}"
@@ -20648,12 +20691,21 @@ function seatAddRoom() {
             id="seatRC_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
         </div>
       </div>
-      <div style="margin-top:10px;">
-        <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">
-          Assigned Classes <span style="color:#999;">(leave blank = all remaining students)</span>
-        </label>
-        <input type="text" placeholder="e.g., Class IX, Class X — or leave blank"
-          id="seatRCls_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">
+            Assigned Classes <span style="color:#999;">(blank = remaining)</span>
+          </label>
+          <input type="text" placeholder="e.g., Class IX, Class X"
+            id="seatRCls_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">
+            Assigned Sections <span style="color:#999;">(blank = all sections)</span>
+          </label>
+          <input type="text" placeholder="e.g., A, B"
+            id="seatRSec_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+        </div>
       </div>`;
     document.getElementById('seatRoomList').appendChild(div);
 }
@@ -20675,16 +20727,31 @@ async function doGenerateSeatingV2() {
     let roomDefs     = [];   // [{name, capacity, classes:[]}]
 
     if (mode === 'auto') {
-        const cap    = parseInt(document.getElementById('seatRoomCap').value) || 30;
         const prefix = document.getElementById('seatPrefix').value || 'Room';
         const method = document.getElementById('seatMethod').value;
 
-        // Sort students by method
+        // Collect auto room definitions
+        const autoRooms = [];
+        let ai = 1;
+        while(document.getElementById(`autoRoom_${ai}`)) {
+            const rName = document.getElementById(`autoRN_${ai}`)?.value || `${prefix} ${ai}`;
+            const rCap  = parseInt(document.getElementById(`autoRC_${ai}`)?.value) || 30;
+            autoRooms.push({ name: rName, capacity: rCap });
+            ai++;
+        }
+        if (!autoRooms.length) { showAlert('❌ Add at least one room with capacity.','error'); return; }
+
+        const totalCap = autoRooms.reduce((s,r)=>s+r.capacity, 0);
+        if (totalCap < students.length) {
+            if (!confirm(`⚠️ Total capacity (${totalCap}) is less than students (${students.length}). Some students won't be seated. Continue?`)) return;
+        }
+
+        // Sort students
         let ordered = [...students];
         if (method === 'mix') {
             const buckets = {};
             students.forEach(s => { const k=s.class||s.classId||'?'; if(!buckets[k])buckets[k]=[]; buckets[k].push(s); });
-            Object.values(buckets).forEach(b => b.sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true})));
+            Object.values(buckets).forEach(b => b.sort((a,b2)=>String(a.roll).localeCompare(String(b2.roll),undefined,{numeric:true})));
             ordered = [];
             let go=true; const bArr=Object.values(buckets);
             while(go){go=false;bArr.forEach(b=>{if(b.length){ordered.push(b.shift());go=true;}});}
@@ -20694,14 +20761,16 @@ async function doGenerateSeatingV2() {
             ordered.sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}));
         }
 
-        let rNo=1, sNo=1;
-        ordered.forEach(s => {
-            if(sNo>cap){rNo++;sNo=1;}
-            seatingPlan.push({seatNo:sNo,roomNo:rNo,roomName:`${prefix} ${rNo}`,roll:s.roll||'—',name:s.name||'—',class:s.class||s.classId||'—',section:s.section||''});
-            sNo++;
+        // Fill rooms sequentially
+        let studentIdx = 0;
+        autoRooms.forEach((room, ri) => {
+            let sNo = 1;
+            while(studentIdx < ordered.length && sNo <= room.capacity) {
+                const s = ordered[studentIdx++];
+                seatingPlan.push({seatNo:sNo++, roomNo:ri+1, roomName:room.name, roll:s.roll||'—', name:s.name||'—', class:s.class||s.classId||'—', section:s.section||''});
+            }
         });
-        const totalRooms = rNo;
-        for(let r=1;r<=totalRooms;r++) roomDefs.push({name:`${prefix} ${r}`, capacity:cap, classes:[]});
+        roomDefs = autoRooms;
 
     } else {
         // Manual mode — collect room definitions
@@ -20711,7 +20780,9 @@ async function doGenerateSeatingV2() {
             const rCap  = parseInt(document.getElementById(`seatRC_${roomIdx}`)?.value) || 30;
             const rCls  = (document.getElementById(`seatRCls_${roomIdx}`)?.value || '')
                             .split(',').map(c=>c.trim()).filter(Boolean);
-            roomDefs.push({ name: rName, capacity: rCap, classes: rCls });
+            const rSec  = (document.getElementById(`seatRSec_${roomIdx}`)?.value || '')
+                            .split(',').map(c=>c.trim()).filter(Boolean);
+            roomDefs.push({ name: rName, capacity: rCap, classes: rCls, sections: rSec });
             roomIdx++;
         }
         if (!roomDefs.length) { showAlert('❌ Add at least one room.','error'); return; }
@@ -20724,14 +20795,17 @@ async function doGenerateSeatingV2() {
         roomDefs.forEach((room, ri) => {
             seatNo = 1;
             let roomStudents = [];
-            if (room.classes.length) {
-                // Get students matching these classes
+            if (room.classes.length || room.sections.length) {
                 roomStudents = students
-                    .filter(s => !assigned.has(s.roll) && room.classes.some(c => (s.class||s.classId||'').toLowerCase().includes(c.toLowerCase())))
+                    .filter(s => {
+                        if (assigned.has(s.roll)) return false;
+                        const matchClass   = !room.classes.length  || room.classes.some(c  => (s.class||s.classId||'').toLowerCase().includes(c.toLowerCase()));
+                        const matchSection = !room.sections.length || room.sections.some(sec => (s.section||'').toLowerCase() === sec.toLowerCase());
+                        return matchClass && matchSection;
+                    })
                     .sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}))
                     .slice(0, room.capacity);
             } else {
-                // Fill with unassigned students
                 roomStudents = students
                     .filter(s => !assigned.has(s.roll))
                     .sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}))
@@ -21999,14 +22073,13 @@ async function initMarksDropdowns() {
 
 // Manual Provisional Assignment
 function onSessionChange(session) {
+    // Session is just a label — time field always freely editable
+    // Only 'Custom' clears the time for user convenience
     const timeInput = document.getElementById('examStartTime');
     const durInput  = document.getElementById('examDuration');
-    if (!timeInput) return;
-    switch(session) {
-        case 'Morning':   timeInput.value = '10:00'; if(durInput) durInput.value = '180'; break;
-        case 'Afternoon': timeInput.value = '14:00'; if(durInput) durInput.value = '180'; break;
-        case 'Evening':   timeInput.value = '17:00'; if(durInput) durInput.value = '120'; break;
-        case 'Custom':    timeInput.value = ''; timeInput.focus(); break;
+    if (session === 'Custom' && timeInput) {
+        timeInput.value = '';
+        timeInput.focus();
     }
 }
 
