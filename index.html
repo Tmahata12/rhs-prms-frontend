@@ -3504,7 +3504,13 @@ body.dark-mode .form-group textarea:focus {
                 <!-- Advanced Exam Tools -->
                 <div class="card" style="background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); color: white; margin-bottom: 20px;">
                     <h3 style="color: white; margin-bottom: 15px;">🎓 Advanced Exam Tools</h3>
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 15px;">
+                        <button class="btn" onclick="smartExamSchedule()" style="background: white; color: #667eea; font-weight: bold; padding: 15px;">
+                            🤖 Smart Schedule
+                        </button>
+                        <button class="btn" onclick="showStudentUploadDialog()" style="background: white; color: #FF6B6B; font-weight: bold; padding: 15px;">
+                            📤 Upload Students
+                        </button>
                         <button class="btn" onclick="showSeatingArrangementDialog()" style="background: white; color: #4CAF50; font-weight: bold; padding: 15px;">
                             🪑 Seating Plan
                         </button>
@@ -3516,7 +3522,7 @@ body.dark-mode .form-group textarea:focus {
                         </button>
                     </div>
                     <p style="margin-top: 15px; font-size: 14px; opacity: 0.9;">
-                        ✨ Auto-generate seating arrangements, invigilator duty rosters, and admit cards!
+                        ✨ Smart exam scheduling, student data upload from Excel, and auto-generate exam materials!
                     </p>
                 </div>
 
@@ -14167,11 +14173,6 @@ function createExamSchedule() {
     
     loadExamList();
     updateExamStats();
-    
-    // Automatically open timetable entry form
-    setTimeout(() => {
-        openExamTimetable(exam.id);
-    }, 500);
 }
 
 // Load exam list
@@ -19963,9 +19964,8 @@ async function loadExamList() {
                 <td>${formatDate(exam.startDate)} to ${formatDate(exam.endDate)}<br><small>${examTimetables.length} exams</small></td>
                 <td><span style="background: ${statusColor}; color: white; padding: 4px 12px; border-radius: 12px; font-size: 12px;">${exam.status}</span></td>
                 <td>
-                    <button class="btn btn-sm btn-primary" onclick="openExamTimetable(${exam.id})" title="Add/Edit Timetable">📝 Timetable</button>
                     <button class="btn btn-sm btn-info" onclick="viewExamTimetable(${exam.id})" title="View Timetable">📋 View</button>
-                    <button class="btn btn-sm btn-success" onclick="printExamTimetable(${exam.id})" title="Print">🖨️</button>
+                    <button class="btn btn-sm btn-primary" onclick="printExamTimetable(${exam.id})" title="Print">🖨️</button>
                     <button class="btn btn-sm btn-danger" onclick="deleteExam(${exam.id})" title="Delete">🗑️</button>
                 </td>
             </tr>
@@ -21008,6 +21008,415 @@ console.log('%c✅ Invigilator Roster', 'color: #2196F3; font-size: 14px;');
 console.log('%c✅ Admit Cards', 'color: #2196F3; font-size: 14px;');
 console.log('%c✅ Certificate Templates', 'color: #2196F3; font-size: 14px;');
 console.log('%c✅ Enhanced Provisional', 'color: #2196F3; font-size: 14px;');
+
+// ==========================================
+// ENHANCED FEATURES - MongoDB + Smart Exam + Student Upload
+// ==========================================
+
+const BACKEND_URL = 'https://rhs-prms-backend.onrender.com'; // Update করুন আপনার backend URL দিয়ে
+let syncStatus = 'offline';
+
+// Sync Indicator
+function createSyncIndicator() {
+    const indicator = document.createElement('div');
+    indicator.id = 'syncIndicator';
+    indicator.style.cssText = `
+        position: fixed; top: 80px; right: 20px; padding: 10px 20px; border-radius: 20px;
+        background: white; box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 99998;
+        display: flex; align-items: center; gap: 10px; font-size: 14px; font-weight: 600;
+        transition: all 0.3s;
+    `;
+    indicator.innerHTML = `<span id="syncIcon">🔄</span><span id="syncText">Checking...</span>`;
+    document.body.appendChild(indicator);
+    updateSyncIndicator();
+}
+
+function updateSyncIndicator(status = syncStatus) {
+    syncStatus = status;
+    const indicator = document.getElementById('syncIndicator');
+    const icon = document.getElementById('syncIcon');
+    const text = document.getElementById('syncText');
+    if (!indicator) return;
+    
+    const styles = {
+        online: { bg: 'linear-gradient(135deg, #4CAF50 0%, #45a049 100%)', icon: '✅', text: 'Cloud Synced', color: 'white' },
+        offline: { bg: 'linear-gradient(135deg, #FF9800 0%, #F57C00 100%)', icon: '📴', text: 'Offline Mode', color: 'white' },
+        syncing: { bg: 'linear-gradient(135deg, #2196F3 0%, #1976D2 100%)', icon: '🔄', text: 'Syncing...', color: 'white' }
+    };
+    
+    const style = styles[status] || styles.offline;
+    indicator.style.background = style.bg;
+    indicator.style.color = style.color;
+    icon.textContent = style.icon;
+    text.textContent = style.text;
+    
+    if (status === 'syncing') {
+        const spinStyle = document.getElementById('spinAnimation') || document.createElement('style');
+        spinStyle.id = 'spinAnimation';
+        spinStyle.textContent = '@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }';
+        if (!document.getElementById('spinAnimation')) document.head.appendChild(spinStyle);
+        icon.style.animation = 'spin 1s linear infinite';
+    } else {
+        icon.style.animation = 'none';
+    }
+}
+
+// Enhanced DB with MongoDB sync
+const EnhancedDB = {
+    async get(key) {
+        const local = localStorage.getItem(key);
+        const localData = local ? JSON.parse(local) : [];
+        
+        try {
+            updateSyncIndicator('syncing');
+            const response = await fetch(`${BACKEND_URL}/api/data/${key}`, {
+                headers: { 'Authorization': `Bearer ${localStorage.getItem('authToken')}` }
+            });
+            
+            if (response.ok) {
+                const data = await response.json();
+                const cloudData = data.value || [];
+                localStorage.setItem(key, JSON.stringify(cloudData));
+                updateSyncIndicator('online');
+                return cloudData;
+            } else {
+                updateSyncIndicator('offline');
+                return localData;
+            }
+        } catch (error) {
+            updateSyncIndicator('offline');
+            return localData;
+        }
+    },
+    
+    async set(key, value) {
+        localStorage.setItem(key, JSON.stringify(value));
+        
+        try {
+            updateSyncIndicator('syncing');
+            const response = await fetch(`${BACKEND_URL}/api/data/${key}`, {
+                method: 'POST',
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+                },
+                body: JSON.stringify({ value })
+            });
+            
+            if (response.ok) {
+                updateSyncIndicator('online');
+            } else {
+                updateSyncIndicator('offline');
+            }
+        } catch (error) {
+            updateSyncIndicator('offline');
+        }
+        
+        return value;
+    },
+    
+    getObj(key) {
+        const data = localStorage.getItem(key);
+        return data ? JSON.parse(data) : {};
+    },
+    
+    setObj(key, value) {
+        return this.set(key, value);
+    },
+    
+    clear() {
+        localStorage.clear();
+        return true;
+    }
+};
+
+async function testBackendConnection() {
+    try {
+        const response = await fetch(`${BACKEND_URL}/health`, { method: 'GET' });
+        if (response.ok) {
+            updateSyncIndicator('online');
+            return true;
+        }
+    } catch (error) {
+        updateSyncIndicator('offline');
+        return false;
+    }
+}
+
+// Student Excel Upload
+function showStudentUploadDialog() {
+    const modal = document.createElement('div');
+    modal.className = 'modal show';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '999999';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px; width: 90%;">
+            <button class="modal-close" onclick="this.closest('.modal').remove()" style="position: absolute; top: 15px; right: 15px; background: #f44336; color: white; border: none; width: 35px; height: 35px; border-radius: 50%; cursor: pointer; font-size: 20px;">×</button>
+            
+            <h2 style="margin-bottom: 20px;">📤 Upload Student Data from Excel</h2>
+            
+            <div style="background: #e3f2fd; padding: 20px; border-radius: 8px; margin-bottom: 20px;">
+                <h4>Excel Columns Required:</h4>
+                <ul style="margin: 10px 0 10px 20px;">
+                    <li><strong>Roll</strong>, <strong>Name</strong>, <strong>Father Name</strong>, <strong>Class</strong></li>
+                    <li>Optional: Mobile, DOB</li>
+                </ul>
+                <button onclick="downloadStudentTemplate()" class="btn btn-sm btn-primary">📥 Download Template</button>
+            </div>
+            
+            <div style="border: 2px dashed #2196F3; border-radius: 8px; padding: 30px; text-align: center; background: #f5f5f5;">
+                <input type="file" id="studentExcelFile" accept=".xlsx,.xls,.csv" style="display: none;" onchange="handleStudentExcelUpload(event)">
+                <button onclick="document.getElementById('studentExcelFile').click()" class="btn btn-primary" style="padding: 15px 30px;">
+                    📂 Choose Excel File
+                </button>
+            </div>
+            
+            <div id="uploadPreview" style="max-height: 300px; overflow-y: auto; margin-top: 20px;"></div>
+            <div id="uploadActions" style="display: none; margin-top: 20px; text-align: right;">
+                <button onclick="this.closest('.modal').remove()" class="btn btn-secondary">Cancel</button>
+                <button onclick="confirmStudentUpload()" class="btn btn-success">✅ Import Students</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+function downloadStudentTemplate() {
+    const csv = 'Roll,Name,Father Name,Class,Mobile,DOB\n1,Sample Student,Sample Father,Class 9A,9876543210,2010-01-15';
+    const blob = new Blob([csv], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'student_template.csv';
+    a.click();
+    showAlert('✅ Template downloaded!', 'success');
+}
+
+let pendingStudentData = [];
+
+async function handleStudentExcelUpload(event) {
+    const file = event.target.files[0];
+    if (!file) return;
+    
+    showAlert('📊 Reading Excel...', 'info');
+    
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        try {
+            const data = new Uint8Array(e.target.result);
+            const workbook = XLSX.read(data, { type: 'array' });
+            const sheet = workbook.Sheets[workbook.SheetNames[0]];
+            const json = XLSX.utils.sheet_to_json(sheet);
+            
+            pendingStudentData = json.map((row, i) => ({
+                id: Date.now() + i,
+                roll: row.Roll || row.roll || (i + 1),
+                name: row.Name || row.name || 'Unknown',
+                fatherName: row['Father Name'] || row.fatherName || '',
+                className: row.Class || row.class || '',
+                mobile: row.Mobile || row.mobile || '',
+                dob: row.DOB || row.dob || '',
+                createdAt: new Date().toISOString()
+            }));
+            
+            const preview = document.getElementById('uploadPreview');
+            preview.innerHTML = `
+                <h4>Preview (${pendingStudentData.length} students):</h4>
+                <table style="width: 100%; border-collapse: collapse; font-size: 14px;">
+                    <tr style="background: #f5f5f5;">
+                        <th style="border: 1px solid #ddd; padding: 8px;">Roll</th>
+                        <th style="border: 1px solid #ddd; padding: 8px;">Name</th>
+                        <th style="border: 1px solid #ddd; padding: 8px;">Father</th>
+                        <th style="border: 1px solid #ddd; padding: 8px;">Class</th>
+                    </tr>
+                    ${pendingStudentData.slice(0, 10).map(s => `
+                        <tr>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${s.roll}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${s.name}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${s.fatherName}</td>
+                            <td style="border: 1px solid #ddd; padding: 8px;">${s.className}</td>
+                        </tr>
+                    `).join('')}
+                </table>
+            `;
+            
+            document.getElementById('uploadActions').style.display = 'block';
+            showAlert(`✅ Found ${pendingStudentData.length} students!`, 'success');
+        } catch (error) {
+            showAlert('❌ Error: ' + error.message, 'error');
+        }
+    };
+    reader.readAsArrayBuffer(file);
+}
+
+async function confirmStudentUpload() {
+    if (pendingStudentData.length === 0) return;
+    
+    showAlert('💾 Importing...', 'info');
+    
+    let students = await EnhancedDB.get('students') || [];
+    students = [...students, ...pendingStudentData];
+    await EnhancedDB.set('students', students);
+    
+    showAlert(`✅ Imported ${pendingStudentData.length} students!`, 'success');
+    document.querySelector('.modal').remove();
+}
+
+// Smart Exam Schedule
+async function smartExamSchedule() {
+    const modal = document.createElement('div');
+    modal.className = 'modal show';
+    modal.style.display = 'flex';
+    modal.style.zIndex = '999999';
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 800px; width: 95%;">
+            <button class="modal-close" onclick="this.closest('.modal').remove()" style="position: absolute; top: 15px; right: 15px; background: #f44336; color: white; border: none; width: 35px; height: 35px; border-radius: 50%; cursor: pointer; font-size: 20px;">×</button>
+            
+            <h2 style="margin-bottom: 20px;">🤖 Smart Exam Schedule Generator</h2>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Exam Name *</label>
+                    <input type="text" id="smartExamName" placeholder="e.g., 1st Summative 2025">
+                </div>
+                <div class="form-group">
+                    <label>Exam Type *</label>
+                    <select id="smartExamType">
+                        <option>1st Summative</option>
+                        <option>2nd Summative</option>
+                        <option>Test Exam</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Start Date *</label>
+                    <input type="date" id="smartStartDate">
+                </div>
+                <div class="form-group">
+                    <label>Number of Days *</label>
+                    <input type="number" id="smartExamDays" value="7" min="1">
+                </div>
+            </div>
+            
+            <button onclick="generateSmartSchedule()" class="btn btn-success" style="width: 100%; margin-top: 20px;">
+                🤖 Generate Smart Schedule
+            </button>
+            
+            <div id="smartSchedulePreview" style="margin-top: 20px;"></div>
+        </div>
+    `;
+    document.body.appendChild(modal);
+}
+
+async function generateSmartSchedule() {
+    const name = document.getElementById('smartExamName').value;
+    const type = document.getElementById('smartExamType').value;
+    const startDate = new Date(document.getElementById('smartStartDate').value);
+    const days = parseInt(document.getElementById('smartExamDays').value);
+    
+    if (!name || !startDate || !days) {
+        showAlert('❌ Fill all fields!', 'error');
+        return;
+    }
+    
+    showAlert('🤖 Generating...', 'info');
+    
+    const classes = await EnhancedDB.get('classes') || [];
+    const subjects = await EnhancedDB.get('subjects') || [];
+    
+    if (classes.length === 0) {
+        showAlert('❌ Add classes first!', 'error');
+        return;
+    }
+    
+    const schedule = [];
+    let currentDate = new Date(startDate);
+    let subIndex = 0;
+    
+    for (let day = 0; day < days; day++) {
+        if (currentDate.getDay() === 0) {
+            currentDate.setDate(currentDate.getDate() + 1);
+            continue;
+        }
+        
+        const subjectsToday = subjects.slice(subIndex, subIndex + 2);
+        subjectsToday.forEach((subj, i) => {
+            classes.forEach(cls => {
+                schedule.push({
+                    id: Date.now() + Math.random(),
+                    examName: name,
+                    className: cls.name,
+                    subject: subj.name,
+                    date: currentDate.toISOString().split('T')[0],
+                    session: i === 0 ? 'Morning' : 'Afternoon',
+                    startTime: i === 0 ? '10:00 AM' : '02:00 PM',
+                    duration: 90
+                });
+            });
+        });
+        
+        subIndex += 2;
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    window.pendingSchedule = { name, schedule };
+    
+    document.getElementById('smartSchedulePreview').innerHTML = `
+        <div style="background: #e8f5e9; padding: 15px; border-radius: 8px;">
+            <h4>✅ Generated ${schedule.length} exam entries!</h4>
+            <p>Dates: ${new Date(schedule[0].date).toLocaleDateString()} to ${new Date(schedule[schedule.length-1].date).toLocaleDateString()}</p>
+            <button onclick="saveSmartSchedule()" class="btn btn-success" style="margin-top: 10px;">
+                💾 Save Schedule
+            </button>
+        </div>
+    `;
+    
+    showAlert('✅ Schedule generated!', 'success');
+}
+
+async function saveSmartSchedule() {
+    const { name, schedule } = window.pendingSchedule;
+    
+    const exam = {
+        id: Date.now(),
+        name: name,
+        type: schedule[0].examType || '1st Summative',
+        year: '2024-25',
+        startDate: schedule[0].date,
+        endDate: schedule[schedule.length - 1].date,
+        status: 'Upcoming',
+        createdAt: new Date().toISOString()
+    };
+    
+    let exams = await EnhancedDB.get('exams') || [];
+    exams.push(exam);
+    await EnhancedDB.set('exams', exams);
+    
+    let timetables = await EnhancedDB.get('examTimetables') || [];
+    schedule.forEach(s => { s.examId = exam.id; timetables.push(s); });
+    await EnhancedDB.set('examTimetables', timetables);
+    
+    showAlert(`✅ Saved! ${schedule.length} entries created.`, 'success');
+    document.querySelector('.modal').remove();
+    
+    if (typeof loadExamList === 'function') loadExamList();
+}
+
+// Initialize
+setTimeout(() => {
+    createSyncIndicator();
+    testBackendConnection();
+    
+    // Replace DB
+    window.OriginalDB = window.DB;
+    window.DB = EnhancedDB;
+    
+    console.log('%c🔄 MongoDB Sync Enabled!', 'color: #4CAF50; font-weight: bold;');
+    console.log('%c📤 Student Upload Ready!', 'color: #2196F3; font-weight: bold;');
+    console.log('%c🤖 Smart Exam Ready!', 'color: #FF9800; font-weight: bold;');
+}, 1000);
 
 // Helper dialog functions for new features
 function showSeatingArrangementDialog() {
