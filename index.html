@@ -3626,9 +3626,11 @@ body.dark-mode .form-group textarea:focus {
                         
                         <div class="form-group">
                             <label>Session *</label>
-                            <select id="examSession">
-                                <option value="Morning">Morning (10:00 AM - 1:00 PM)</option>
-                                <option value="Afternoon">Afternoon (2:00 PM - 5:00 PM)</option>
+                            <select id="examSession" onchange="onSessionChange(this.value)">
+                                <option value="Morning">Morning</option>
+                                <option value="Afternoon">Afternoon</option>
+                                <option value="Evening">Evening</option>
+                                <option value="Custom">Custom</option>
                             </select>
                         </div>
                         
@@ -3639,7 +3641,7 @@ body.dark-mode .form-group textarea:focus {
                         
                         <div class="form-group">
                             <label>Duration (minutes) *</label>
-                            <input type="number" id="examDuration" value="180" min="30" required>
+                            <input type="number" id="examDuration" value="180" min="30" max="480" required>
                         </div>
                     </div>
                     
@@ -20513,52 +20515,295 @@ console.log('%c✅ Enhanced Provisional', 'color: #2196F3; font-size: 14px;');
 
 // Helper dialog functions for new features
 async function showSeatingArrangementDialog() {
-    const exams  = await DB.get('exams')  || [];
-    const halls  = await DB.get('halls')  || [];
+    const exams    = await DB.get('exams')    || [];
+    const classes  = await DB.get('classes')  || [];
+    const students = await DB.get('students') || [];
     if (!exams.length) { showAlert('❌ No Exams found. Please create an Exam first.','error'); return; }
 
-    const examOptions = exams.map(e =>
+    const examOpts = exams.map(e =>
         `<option value="${e.id}">${e.name} (${e.type} ${e.year})</option>`).join('');
-    const hallOptions = halls.length
-        ? halls.map(h => `<option value="${h.id}" data-cap="${h.capacity}">${h.name} (Capacity: ${h.capacity})</option>`).join('')
-        : '<option value="">কোনো Hall নেই — capacity ম্যানুয়ালি দিন</option>';
+
+    // Class list for assignment
+    const classNames = [...new Set(students.map(s => s.class || s.classId || '').filter(Boolean))];
+    const classOpts  = classNames.map(c => `<option value="${c}">${c}</option>`).join('');
+    const totalStudents = students.length;
 
     const modal = document.createElement('div');
     modal.id = 'seatingModal';
-    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.6);z-index:999999;display:flex;align-items:center;justify-content:center;';
+    modal.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.7);z-index:999999;display:flex;align-items:center;justify-content:center;';
     modal.innerHTML = `
-      <div style="background:#fff;border-radius:14px;padding:30px;width:90%;max-width:520px;max-height:90vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.3);">
-        <h2 style="color:#1e3c72;margin-bottom:20px;">🪑 Generate Seating Arrangement</h2>
-        <div style="margin-bottom:15px;">
-          <label style="font-weight:600;display:block;margin-bottom:6px;">Select Exam *</label>
-          <select id="seatExamId" style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:8px;font-size:15px;">
-            <option value="">-- Select Exam --</option>${examOptions}
+      <div style="background:#fff;border-radius:14px;padding:28px;width:95%;max-width:680px;max-height:92vh;overflow-y:auto;box-shadow:0 20px 60px rgba(0,0,0,0.4);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;">
+          <h2 style="color:#1e3c72;margin:0;">🪑 Seating Arrangement</h2>
+          <button onclick="document.getElementById('seatingModal').remove()" style="background:#f44336;color:#fff;border:none;border-radius:50%;width:30px;height:30px;font-size:18px;cursor:pointer;">×</button>
+        </div>
+
+        <!-- Exam -->
+        <div style="margin-bottom:14px;">
+          <label style="font-weight:700;display:block;margin-bottom:6px;color:#333;">Select Exam *</label>
+          <select id="seatExamId" style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:8px;font-size:14px;">
+            <option value="">-- Select Exam --</option>${examOpts}
           </select>
         </div>
-        <div style="margin-bottom:15px;">
-          <label style="font-weight:600;display:block;margin-bottom:6px;">Students per Room *</label>
-          <input type="number" id="seatRoomCap" value="30" min="5" max="100"
-            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:8px;font-size:15px;">
+
+        <!-- Mode -->
+        <div style="margin-bottom:14px;">
+          <label style="font-weight:700;display:block;margin-bottom:8px;color:#333;">Seating Mode</label>
+          <div style="display:flex;gap:10px;">
+            <label style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+              <input type="radio" name="seatMode" value="auto" checked onchange="seatModeToggle('auto')">
+              <span><strong>Auto</strong><br><small style="color:#666;">Same capacity per room, class mix</small></span>
+            </label>
+            <label style="flex:1;padding:10px;border:2px solid #e0e0e0;border-radius:8px;cursor:pointer;display:flex;align-items:center;gap:8px;">
+              <input type="radio" name="seatMode" value="manual" onchange="seatModeToggle('manual')">
+              <span><strong>Manual</strong><br><small style="color:#666;">Set each room's capacity & class</small></span>
+            </label>
+          </div>
         </div>
-        <div style="margin-bottom:20px;">
-          <label style="font-weight:600;display:block;margin-bottom:6px;">Room Names (comma separated)</label>
-          <input type="text" id="seatRoomNames" placeholder="e.g., Room 1, Room 2, Science Lab"
-            style="width:100%;padding:10px;border:2px solid #e0e0e0;border-radius:8px;font-size:15px;">
-          <small style="color:#888;">Leave blank for Room 1, Room 2...</small>
+
+        <!-- AUTO MODE -->
+        <div id="seatAutoSection">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:14px;">
+            <div>
+              <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Students per Room</label>
+              <input type="number" id="seatRoomCap" value="30" min="5" max="100"
+                style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
+            </div>
+            <div>
+              <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Room Name Prefix</label>
+              <input type="text" id="seatPrefix" value="Room"
+                style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
+            </div>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="font-weight:600;display:block;margin-bottom:6px;font-size:13px;">Arrangement Method</label>
+            <select id="seatMethod" style="width:100%;padding:9px;border:2px solid #e0e0e0;border-radius:8px;">
+              <option value="mix">Class Mix — different classes in one room (recommended)</option>
+              <option value="class">Class-wise — same class together</option>
+              <option value="roll">Roll order — across all students</option>
+            </select>
+          </div>
+          <div style="background:#e8f5e9;padding:10px 14px;border-radius:8px;font-size:13px;color:#2e7d32;margin-bottom:14px;">
+            📊 Total students: <strong>${totalStudents}</strong> &nbsp;|&nbsp;
+            Rooms needed: <strong id="seatRoomsNeeded">${Math.ceil(totalStudents/30)}</strong>
+            <script>
+              document.getElementById('seatRoomCap')?.addEventListener('input', function() {
+                const n = document.getElementById('seatRoomsNeeded');
+                if(n) n.textContent = Math.ceil(${totalStudents}/Math.max(1,parseInt(this.value)||30));
+              });
+            <\/script>
+          </div>
         </div>
-        <div style="background:#e3f2fd;padding:12px;border-radius:8px;margin-bottom:20px;border-left:4px solid #2196F3;">
-          <strong>ℹ️ Method:</strong> Students from different classes are mixed (sorted by roll number)
-        </div>
-        <div style="display:flex;gap:10px;">
-          <button onclick="doGenerateSeating()" style="flex:1;padding:12px;background:linear-gradient(135deg,#4CAF50,#45a049);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer;">
-            🪑 Generate Seating Plan
+
+        <!-- MANUAL MODE -->
+        <div id="seatManualSection" style="display:none;">
+          <div style="background:#fff3e0;padding:12px;border-radius:8px;margin-bottom:12px;font-size:13px;border-left:3px solid #FF9800;">
+            <strong>Manual Mode:</strong> Define each room with its own capacity and which class(es) sit there.
+          </div>
+          <div id="seatRoomList" style="margin-bottom:12px;"></div>
+          <button onclick="seatAddRoom()" style="width:100%;padding:10px;background:#e3f2fd;border:2px dashed #90caf9;border-radius:8px;color:#1565c0;font-weight:600;cursor:pointer;font-size:14px;">
+            ➕ Add Room
           </button>
-          <button onclick="document.getElementById('seatingModal').remove()" style="padding:12px 20px;background:#f44336;color:#fff;border:none;border-radius:8px;cursor:pointer;font-weight:600;">
-            ✕ Close
+        </div>
+
+        <!-- Generate button -->
+        <div style="display:flex;gap:10px;margin-top:18px;">
+          <button onclick="doGenerateSeatingV2()" style="flex:1;padding:13px;background:linear-gradient(135deg,#1e3c72,#2a5298);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:15px;cursor:pointer;">
+            🪑 Generate & Print Seating Plan
           </button>
         </div>
       </div>`;
     document.body.appendChild(modal);
+
+    // Init manual section with 2 rooms
+    seatAddRoom(); seatAddRoom();
+}
+
+function seatModeToggle(mode) {
+    document.getElementById('seatAutoSection').style.display   = mode==='auto'   ? 'block' : 'none';
+    document.getElementById('seatManualSection').style.display = mode==='manual' ? 'block' : 'none';
+}
+
+let _seatRoomCount = 0;
+function seatAddRoom() {
+    _seatRoomCount++;
+    const n   = _seatRoomCount;
+    const div = document.createElement('div');
+    div.id    = `seatRoom_${n}`;
+    div.style.cssText = 'border:1px solid #e0e0e0;border-radius:8px;padding:14px;margin-bottom:10px;background:#fafafa;';
+    div.innerHTML = `
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+        <strong style="color:#1e3c72;">Room ${n}</strong>
+        <button onclick="document.getElementById('seatRoom_${n}').remove()" style="background:#ffebee;border:none;color:#f44336;border-radius:6px;padding:3px 10px;cursor:pointer;">✕ Remove</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">
+        <div>
+          <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">Room Name *</label>
+          <input type="text" placeholder="e.g., Room ${n} / Hall A" value="Room ${n}"
+            id="seatRN_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+        </div>
+        <div>
+          <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">Capacity *</label>
+          <input type="number" value="30" min="1" max="200"
+            id="seatRC_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+        </div>
+      </div>
+      <div style="margin-top:10px;">
+        <label style="font-size:12px;color:#555;display:block;margin-bottom:4px;">
+          Assigned Classes <span style="color:#999;">(leave blank = all remaining students)</span>
+        </label>
+        <input type="text" placeholder="e.g., Class IX, Class X — or leave blank"
+          id="seatRCls_${n}" style="width:100%;padding:8px;border:2px solid #e0e0e0;border-radius:6px;font-size:13px;">
+      </div>`;
+    document.getElementById('seatRoomList').appendChild(div);
+}
+
+async function doGenerateSeatingV2() {
+    const examId  = document.getElementById('seatExamId').value;
+    if (!examId) { showAlert('❌ Please select an Exam!','error'); return; }
+
+    const mode    = document.querySelector('input[name="seatMode"]:checked')?.value || 'auto';
+    const exams   = await DB.get('exams')    || [];
+    const students= await DB.get('students') || [];
+    const settings= await DB.getObj('settings') || {};
+    const exam    = exams.find(e => String(e.id)===String(examId));
+    if (!exam)          { showAlert('❌ Exam not found!','error'); return; }
+    if (!students.length){ showAlert('❌ No students found. Add students first.','error'); return; }
+
+    const schoolName = settings.schoolName || 'Ramnagar High School (H.S.)';
+    let seatingPlan  = [];   // [{seatNo, roomNo, roomName, roll, name, class, section}]
+    let roomDefs     = [];   // [{name, capacity, classes:[]}]
+
+    if (mode === 'auto') {
+        const cap    = parseInt(document.getElementById('seatRoomCap').value) || 30;
+        const prefix = document.getElementById('seatPrefix').value || 'Room';
+        const method = document.getElementById('seatMethod').value;
+
+        // Sort students by method
+        let ordered = [...students];
+        if (method === 'mix') {
+            const buckets = {};
+            students.forEach(s => { const k=s.class||s.classId||'?'; if(!buckets[k])buckets[k]=[]; buckets[k].push(s); });
+            Object.values(buckets).forEach(b => b.sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true})));
+            ordered = [];
+            let go=true; const bArr=Object.values(buckets);
+            while(go){go=false;bArr.forEach(b=>{if(b.length){ordered.push(b.shift());go=true;}});}
+        } else if (method === 'class') {
+            ordered.sort((a,b)=>(a.class||'').localeCompare(b.class||'')||String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}));
+        } else {
+            ordered.sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}));
+        }
+
+        let rNo=1, sNo=1;
+        ordered.forEach(s => {
+            if(sNo>cap){rNo++;sNo=1;}
+            seatingPlan.push({seatNo:sNo,roomNo:rNo,roomName:`${prefix} ${rNo}`,roll:s.roll||'—',name:s.name||'—',class:s.class||s.classId||'—',section:s.section||''});
+            sNo++;
+        });
+        const totalRooms = rNo;
+        for(let r=1;r<=totalRooms;r++) roomDefs.push({name:`${prefix} ${r}`, capacity:cap, classes:[]});
+
+    } else {
+        // Manual mode — collect room definitions
+        let roomIdx = 1;
+        while(document.getElementById(`seatRoom_${roomIdx}`)) {
+            const rName = document.getElementById(`seatRN_${roomIdx}`)?.value || `Room ${roomIdx}`;
+            const rCap  = parseInt(document.getElementById(`seatRC_${roomIdx}`)?.value) || 30;
+            const rCls  = (document.getElementById(`seatRCls_${roomIdx}`)?.value || '')
+                            .split(',').map(c=>c.trim()).filter(Boolean);
+            roomDefs.push({ name: rName, capacity: rCap, classes: rCls });
+            roomIdx++;
+        }
+        if (!roomDefs.length) { showAlert('❌ Add at least one room.','error'); return; }
+
+        // Assign students to rooms
+        // Students with specific class assignment first, then remaining
+        const assigned = new Set();
+        let seatNo = 1;
+
+        roomDefs.forEach((room, ri) => {
+            seatNo = 1;
+            let roomStudents = [];
+            if (room.classes.length) {
+                // Get students matching these classes
+                roomStudents = students
+                    .filter(s => !assigned.has(s.roll) && room.classes.some(c => (s.class||s.classId||'').toLowerCase().includes(c.toLowerCase())))
+                    .sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}))
+                    .slice(0, room.capacity);
+            } else {
+                // Fill with unassigned students
+                roomStudents = students
+                    .filter(s => !assigned.has(s.roll))
+                    .sort((a,b)=>String(a.roll).localeCompare(String(b.roll),undefined,{numeric:true}))
+                    .slice(0, room.capacity);
+            }
+            roomStudents.forEach(s => {
+                assigned.add(s.roll);
+                seatingPlan.push({seatNo:seatNo++, roomNo:ri+1, roomName:room.name, roll:s.roll||'—', name:s.name||'—', class:s.class||s.classId||'—', section:s.section||''});
+            });
+        });
+
+        // Warn if unassigned students remain
+        const unassigned = students.filter(s => !assigned.has(s.roll));
+        if (unassigned.length) showAlert(`⚠️ ${unassigned.length} students could not be assigned — add more rooms or increase capacity.`, 'warning');
+    }
+
+    const totalRooms = roomDefs.length || Math.max(...seatingPlan.map(s=>s.roomNo));
+
+    // Save
+    const plans = await DB.get('seatingPlans') || [];
+    plans.push({ id: Date.now(), examId, examName: exam.name, totalStudents: students.length, totalRooms, mode, plan: seatingPlan, createdOn: new Date().toISOString() });
+    await DB.set('seatingPlans', plans);
+
+    document.getElementById('seatingModal')?.remove();
+    showAlert(`✅ Seating Plan ready! ${seatingPlan.length} students in ${totalRooms} rooms`, 'success');
+
+    // Print
+    let seatingHTML = '';
+    for (let r = 1; r <= totalRooms; r++) {
+        const roomStudents = seatingPlan.filter(s => s.roomNo === r);
+        if (!roomStudents.length) continue;
+        const rName = roomStudents[0].roomName;
+        // Class summary for this room
+        const classSummary = [...new Set(roomStudents.map(s=>s.class))].join(', ');
+        const rows = roomStudents.map(s =>
+            `<tr><td style="text-align:center">${s.seatNo}</td><td>${s.roll}</td><td>${s.name}</td><td>${s.class}</td><td style="text-align:center">${s.section||'—'}</td></tr>`).join('');
+        seatingHTML += `
+        <div class="room-page">
+          <div class="hall-header">
+            <span>🚪 ${rName}</span>
+            <span style="font-size:12px;opacity:0.85;">Classes: ${classSummary} &nbsp;|&nbsp; ${roomStudents.length} students &nbsp;|&nbsp; Capacity: ${roomDefs[r-1]?.capacity||roomStudents.length}</span>
+          </div>
+          <table><thead><tr><th>Seat</th><th>Roll No</th><th>Student Name</th><th>Class</th><th>Section</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+          <div style="text-align:right;font-size:11px;color:#888;margin-top:6px;">Invigilator Signature: _______________</div>
+        </div>`;
+    }
+
+    const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
+<title>Seating Plan — ${exam.name}</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:Arial,sans-serif;color:#000;padding:16px;}
+  .page-header{text-align:center;border-bottom:3px double #1e3c72;padding-bottom:12px;margin-bottom:18px;}
+  .page-header h1{font-size:20px;color:#1e3c72;} .page-header h2{font-size:15px;color:#2a5298;margin-top:4px;}
+  .room-page{page-break-after:always;margin-bottom:30px;}
+  .hall-header{background:#1e3c72;color:#fff;padding:10px 16px;border-radius:6px;font-weight:700;font-size:14px;margin-bottom:10px;display:flex;justify-content:space-between;align-items:center;}
+  table{width:100%;border-collapse:collapse;font-size:12px;}
+  th{background:#2a5298;color:#fff;padding:8px 10px;text-align:left;}
+  td{padding:7px 10px;border:1px solid #ddd;}
+  tr:nth-child(even) td{background:#f0f4ff;}
+  @media print{body{padding:6px;}.room-page{page-break-after:always;}}
+</style></head><body>
+<div class="page-header">
+  <h1>🏫 ${schoolName}</h1>
+  <h2>Seating Arrangement — ${exam.name} (${exam.type} ${exam.year})</h2>
+  <p style="font-size:12px;color:#555;margin-top:4px;">Total Students: ${seatingPlan.length} &nbsp;|&nbsp; Total Rooms: ${totalRooms} &nbsp;|&nbsp; Mode: ${mode}</p>
+</div>
+${seatingHTML}
+</body></html>`;
+
+    const w = window.open('','_blank'); w.document.write(html); w.document.close(); setTimeout(()=>w.print(),600);
 }
 
 async function showInvigilatorRosterDialog() {
@@ -21753,6 +21998,18 @@ async function initMarksDropdowns() {
 
 
 // Manual Provisional Assignment
+function onSessionChange(session) {
+    const timeInput = document.getElementById('examStartTime');
+    const durInput  = document.getElementById('examDuration');
+    if (!timeInput) return;
+    switch(session) {
+        case 'Morning':   timeInput.value = '10:00'; if(durInput) durInput.value = '180'; break;
+        case 'Afternoon': timeInput.value = '14:00'; if(durInput) durInput.value = '180'; break;
+        case 'Evening':   timeInput.value = '17:00'; if(durInput) durInput.value = '120'; break;
+        case 'Custom':    timeInput.value = ''; timeInput.focus(); break;
+    }
+}
+
 async function manualAssignProvisional(event) {
     if (event) event.preventDefault();
 
