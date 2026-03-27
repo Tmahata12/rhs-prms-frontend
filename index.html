@@ -3,6 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' 'unsafe-eval' data: blob: https: wss:;">
     <title>RHS PRMS v2 - MongoDB Sync Edition</title>
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E🎓%3C/text%3E%3C/svg%3E">
     <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
@@ -5580,7 +5581,7 @@ body.dark-mode .form-group textarea:focus {
             SUBJECTS: `${API_BASE_URL}/api/subjects`,
             TEACHERS: `${API_BASE_URL}/api/teachers`,
             STUDENTS: `${API_BASE_URL}/api/students`,
-            HEALTH: `${API_BASE_URL}/api/health`
+            HEALTH: `${API_BASE_URL}/`
         };
         
         // JWT Token Management
@@ -5738,10 +5739,10 @@ body.dark-mode .form-group textarea:focus {
                 const timeout = setTimeout(() => controller.abort(), 60000);
                 
                 try {
-                    await fetch(API.HEALTH, { 
+                    const hResp = await fetch(API.HEALTH, { 
                         signal: controller.signal,
-                        headers: { 'Content-Type': 'application/json' }
-                    }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+                    });
+                    if (!hResp.ok && hResp.status !== 404) throw new Error(`HTTP ${hResp.status}`);
                     clearTimeout(timeout);
                     updateSyncStatus('success', 'MongoDB connected!');
                 } catch(e) {
@@ -5765,7 +5766,7 @@ body.dark-mode .form-group textarea:focus {
         setInterval(async () => {
             if (!sessionStorage.getItem('loggedIn')) return;
             try {
-                await fetch(API.HEALTH).then(r => { if (!r.ok) throw new Error(); return r.json(); });
+                const _h1 = await fetch(API.HEALTH); if (!_h1.ok && _h1.status !== 404) throw new Error();
                 updateSyncStatus('success', '');
             } catch(e) {
                 updateSyncStatus('error', '');
@@ -5777,8 +5778,8 @@ body.dark-mode .form-group textarea:focus {
             if (sessionStorage.getItem('loggedIn')) {
                 try {
                     updateSyncStatus('syncing', '');
-                    await fetch(API.HEALTH, { signal: AbortSignal.timeout(10000) })
-                        .then(r => { if (!r.ok) throw new Error(); return r.json(); });
+                    const _h2 = await fetch(API.HEALTH, { signal: AbortSignal.timeout(10000) });
+                    if (!_h2.ok && _h2.status !== 404) throw new Error();
                     updateSyncStatus('success', '');
                 } catch(e) {
                     updateSyncStatus('error', ''); // silent — local mode
@@ -5806,12 +5807,19 @@ body.dark-mode .form-group textarea:focus {
 
         async function _mongoFetch(ep, method = 'GET', body = null) {
             const token = getAuthToken ? getAuthToken() : localStorage.getItem('authToken');
-            const opts = { method, headers: { 'Content-Type': 'application/json' } };
+            const opts = {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                signal: AbortSignal.timeout(15000)
+            };
             if (token) opts.headers['Authorization'] = `Bearer ${token}`;
             if (body) opts.body = JSON.stringify(body);
             const resp = await fetch(`${API_BASE_URL}${ep}`, opts);
+            if (resp.status === 404) throw new Error('ENDPOINT_NOT_FOUND');
             if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-            return resp.json();
+            const ct = resp.headers.get('content-type') || '';
+            if (ct.includes('application/json')) return resp.json();
+            return {}; // non-JSON response → return empty
         }
 
         const DB = {
@@ -5824,7 +5832,9 @@ body.dark-mode .form-group textarea:focus {
                         localStorage.setItem('_cache_' + key, JSON.stringify(arr));
                         return arr;
                     } catch(e) {
-                        console.warn(`[DB] MongoDB GET "${key}" failed → localStorage fallback:`, e.message);
+                        if (e.message !== 'ENDPOINT_NOT_FOUND') {
+                            console.warn(`[DB] MongoDB GET "${key}" failed → localStorage fallback:`, e.message);
+                        }
                     }
                 }
                 const c = localStorage.getItem('_cache_' + key) || localStorage.getItem(key);
