@@ -2428,10 +2428,10 @@ body.dark-mode .form-group textarea:focus {
             <!-- Sync Status & Controls (MongoDB Integration) -->
             <div style="display:flex;align-items:center;gap:6px;margin-left:8px;padding:4px 10px;background:rgba(255,255,255,0.1);border-radius:8px;white-space:nowrap;">
                 <div id="syncStatus" style="display:flex;align-items:center;gap:4px;">
-                    <span style="font-size:12px;">🔄</span>
-                    <span id="syncStatusText" style="font-size:11px;color:#999;">Not synced</span>
+                    <span style="font-size:12px;">💾</span>
+                    <span id="syncStatusText" style="font-size:11px;color:#aaa;">Local Mode</span>
                 </div>
-                <span id="syncTime" style="font-size:11px;color:#666;">-</span>
+                <span id="syncTime" style="font-size:11px;color:#888;"></span>
             </div>
             
             <button id="syncButton" onclick="manualSync()" style="padding: 6px 10px; background: linear-gradient(135deg, #4CAF50 0%, #45a049 100%); color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-left: 6px; white-space: nowrap;" title="Sync with MongoDB">🔄</button>
@@ -5659,46 +5659,43 @@ body.dark-mode .form-group textarea:focus {
         let isSyncing = false;
         
         function updateSyncStatus(status, message = '') {
-            const syncButton = document.getElementById('syncButton');
+            const syncButton    = document.getElementById('syncButton');
             const syncStatusText = document.getElementById('syncStatusText');
-            const syncTime = document.getElementById('syncTime');
+            const syncTime      = document.getElementById('syncTime');
             
             if (!syncButton || !syncStatusText) return;
             
             switch (status) {
                 case 'syncing':
                     isSyncing = true;
-                    syncButton.innerHTML = '🔄 Syncing...';
-                    syncButton.disabled = true;
-                    syncStatusText.innerHTML = '<span style="color: #FF9800;">Syncing...</span>';
-                    syncStatusText.previousElementSibling.textContent = '🔄';
+                    syncButton.innerHTML = '🔄';
+                    syncButton.disabled  = true;
+                    syncButton.title     = 'Connecting...';
+                    syncStatusText.innerHTML = '<span style="color:#FF9800;font-size:11px;">Syncing...</span>';
                     break;
                     
                 case 'success':
                     isSyncing = false;
                     lastSyncTime = new Date();
-                    syncButton.innerHTML = '🔄 Sync Now';
-                    syncButton.disabled = false;
-                    syncStatusText.innerHTML = '<span style="color: #4CAF50;">Connected</span>';
-                    syncStatusText.previousElementSibling.textContent = '✅';
-                    if (syncTime) {
-                        syncTime.textContent = 'just now';
-                    }
-                    if (message) {
-                        showAlert('✅ ' + message, 'success');
-                    }
+                    syncButton.innerHTML = '☁️';
+                    syncButton.disabled  = false;
+                    syncButton.title     = 'Connected to MongoDB — click to sync';
+                    syncButton.style.background = 'linear-gradient(135deg,#4CAF50,#45a049)';
+                    syncStatusText.innerHTML = '<span style="color:#4CAF50;font-size:11px;">Cloud Sync ✓</span>';
+                    if (syncTime) syncTime.textContent = 'just now';
+                    if (message) showAlert('✅ ' + message, 'success');
                     startSyncTimeUpdate();
                     break;
                     
                 case 'error':
                     isSyncing = false;
-                    syncButton.innerHTML = '⚠️ Retry';
-                    syncButton.disabled = false;
-                    syncStatusText.innerHTML = '<span style="color: #f44336;">Failed</span>';
-                    syncStatusText.previousElementSibling.textContent = '⚠️';
-                    if (message) {
-                        showAlert('❌ ' + message, 'error');
-                    }
+                    syncButton.innerHTML = '💾';
+                    syncButton.disabled  = false;
+                    syncButton.title     = 'Local Mode — click to retry MongoDB connection';
+                    syncButton.style.background = 'linear-gradient(135deg,#607d8b,#546e7a)';
+                    syncStatusText.innerHTML = '<span style="color:#78909c;font-size:11px;">Local Mode</span>';
+                    if (syncTime) syncTime.textContent = '';
+                    // No error alert — local mode is fine, don't spam user
                     break;
             }
         }
@@ -5734,38 +5731,57 @@ body.dark-mode .form-group textarea:focus {
             
             try {
                 updateSyncStatus('syncing', '');
+                showAlert('🔄 Connecting to MongoDB... (may take 30-60s if server was sleeping)', 'info');
                 
-                // Test backend connection
-                await apiRequest(API.HEALTH);
+                // Longer timeout for Render cold start
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 60000);
                 
-                updateSyncStatus('success', 'Sync completed!');
+                try {
+                    await fetch(API.HEALTH, { 
+                        signal: controller.signal,
+                        headers: { 'Content-Type': 'application/json' }
+                    }).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); });
+                    clearTimeout(timeout);
+                    updateSyncStatus('success', 'MongoDB connected!');
+                } catch(e) {
+                    clearTimeout(timeout);
+                    throw e;
+                }
                 
             } catch (error) {
-                console.error('Manual sync error:', error);
-                updateSyncStatus('error', `Sync failed: ${error.message}`);
+                const isTimeout = error.name === 'AbortError';
+                updateSyncStatus('error', '');
+                showAlert(
+                    isTimeout 
+                        ? '⏱️ Connection timed out. Backend may be starting up — try again in 1 minute.'
+                        : '💾 Running in Local Mode — all data saved to browser storage.',
+                    'warning'
+                );
             }
         }
 
-        // Auto health check every 2 minutes when logged in
+        // Auto health check every 3 minutes — silent, no alerts
         setInterval(async () => {
             if (!sessionStorage.getItem('loggedIn')) return;
             try {
-                await apiRequest(API.HEALTH);
+                await fetch(API.HEALTH).then(r => { if (!r.ok) throw new Error(); return r.json(); });
                 updateSyncStatus('success', '');
             } catch(e) {
-                updateSyncStatus('error', 'Connection lost');
+                updateSyncStatus('error', '');
             }
-        }, 120000);
+        }, 180000);
 
-        // Initial health check after page load
+        // Initial health check — silent
         window.addEventListener('load', async () => {
             if (sessionStorage.getItem('loggedIn')) {
                 try {
                     updateSyncStatus('syncing', '');
-                    await apiRequest(API.HEALTH);
+                    await fetch(API.HEALTH, { signal: AbortSignal.timeout(10000) })
+                        .then(r => { if (!r.ok) throw new Error(); return r.json(); });
                     updateSyncStatus('success', '');
                 } catch(e) {
-                    updateSyncStatus('error', 'Backend offline — using local cache');
+                    updateSyncStatus('error', ''); // silent — local mode
                 }
             }
         });
